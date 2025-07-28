@@ -19,11 +19,16 @@ java = 'java'
 def setjava (newjava):
     global java
     java = newjava + 'java'
+def getjava ():
+    return java
 
 def syswrap (arg):
     if isinstance (arg, str): arg = arg.split ()
     print ('$', *arg)
-    subprocess.run (arg)
+    try:
+        subprocess.run (arg)
+    except Exception as e:
+        print (e)
 
 def fcopy (fin, fon):
     fi = open (fin, 'rb')
@@ -217,6 +222,7 @@ def download_minecraft (projectjson, properties):
     # We don't even NEED net.minecraft.bundler
     # Also we can't read it anyway xd
     shutil.rmtree ('.cache/server/net')
+    if os.path.exists ('.cache/server/libraries'): shutil.rmtree ('.cache/server/libraries')
     os.rename ('.cache/server/META-INF/libraries', '.cache/server/libraries')
 
 # Deobfuscate Minecraft
@@ -397,8 +403,13 @@ def setup_intellij (projectjson, properties):
         <content url="file://$MODULE_DIR$">
         '''
     )
-    for name in projectjson ['packages']:
-        f.write (f'<sourceFolder url="file://$MODULE_DIR$/src/{name}" isTestSource="false" />')
+    if 'srcpaths' in projectjson:
+        s = projectjson ['srcpaths']
+    else:
+        s = []
+        for name in projectjson ['packages']: s.append ('src/%s/' % name)
+    for name in s:
+        f.write (f'<sourceFolder url="file://$MODULE_DIR$/{name}" isTestSource="false" />')
     f.write (
         '''
         </content>
@@ -496,7 +507,7 @@ def setup_berry (projectjson, properties):
     bv = properties.get ('berry_version')
     mkrecursive ('.cache/berry')
     if bv is not None:
-        li = ['agent', 'loader', 'builtins']
+        li = ['loader', 'builtins']
         for l in li:
             name = l + '.jar'
             url = properties ['berry_repo'] .format (version=bv, jarname=l)
@@ -511,9 +522,7 @@ def setup_berry (projectjson, properties):
         jar_extlibs ('builtins.jar')
     else:
         if os.path.exists ('.cache/berry/loader.jar'): os.remove ('.cache/berry/loader.jar')
-        if os.path.exists ('.cache/berry/agent.jar'): os.remove ('.cache/berry/agent.jar')
         os.rename ('output/loader.jar', '.cache/berry/loader.jar')
-        os.rename ('output/agent.jar', '.cache/berry/agent.jar')
 
 # Parse external libraries from jar mods
 def jar_extlibs (mod: str):
@@ -546,7 +555,10 @@ def run_client (projectjson, properties):
         for fn in os.listdir ('.cache/extramods'):
             fcopy (f'.cache/extramods/{fn}', f'.cache/game/mods/{fn}')
     mn = projectjson ['output_mod']
-    fcopy (f'output/{mn}.jar', f'.cache/game/mods/{mn}.jar')
+    if isinstance (mn, list):
+        for mod in mn:
+            fcopy (f'output/{mod}.jar', f'.cache/game/mods/{mod}.jar')
+    else: fcopy (f'output/{mn}.jar', f'.cache/game/mods/{mn}.jar')
     cl = open ('.cache/client.json')
     cljson = json.load (cl)
     cl.close ()
@@ -589,7 +601,7 @@ def run_client (projectjson, properties):
             vars ['auth_uuid'] = auth ['auth_uuid']
         except KeyError: pass
     args = cljson ['arguments']
-    jvmargs = ['-javaagent:../berry/agent.jar', '-Dberry.indev=true', '-Djava.system.class.loader=berry.loader.BerryClassLoader', '-Dberry.cps='+cps]
+    jvmargs = ['-Dberry.indev=true', '-Dberry.cps='+cps]
     for jvmarg in args ['jvm']:
         if isinstance (jvmarg, str):
             jvmargs.append (re.sub ('\\$\\{([A-Za-z0-9_]+)\\}', lambda m: vars [m.group (1)], jvmarg))
@@ -613,7 +625,10 @@ def run_server (projectjson, properties):
         for fn in os.listdir ('.cache/extramods'):
             fcopy (f'.cache/extramods/{fn}', f'.cache/server/mods/{fn}')
     mn = projectjson ['output_mod']
-    fcopy (f'output/{mn}.jar', f'.cache/server/mods/{mn}.jar')
+    if isinstance (mn, list):
+        for mod in mn:
+            fcopy (f'output/{mod}.jar', f'.cache/server/mods/{mod}.jar')
+    else: fcopy (f'output/{mn}.jar', f'.cache/server/mods/{mn}.jar')
     cps = open ('.cache/server/META-INF/classpath-joined') .read () .strip () .split (';')
     for i in range (len (cps)):
         if cps [i] .split ('/') [-1] .startswith ('asm'):
@@ -623,7 +638,7 @@ def run_server (projectjson, properties):
     mc = open ('.cache/server/META-INF/main-class') .read () .strip ()
     os.chdir ('.cache/server/')
     syswrap ([
-        java, '-javaagent:../berry/agent.jar', '-Dberry.side=SERVER', '-Dberry.indev=true', '-Djava.system.class.loader=berry.loader.BerryClassLoader',
+        java, '-Dberry.side=SERVER', '-Dberry.indev=true',
         f'-Dberry.cps={os.pathsep.join (cps)}',
         '-cp', '../berry/loader.jar',
         'berry.loader.BerryLoader', mc, '--nogui'
